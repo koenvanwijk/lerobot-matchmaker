@@ -21,8 +21,12 @@ import logging
 import uuid
 
 from aiohttp import web
+from aiohttp.web import AppKey
 
 from .room import RoomRegistry, VALID_ROLES
+
+# Type-safe application key (avoids aiohttp AppKey warning)
+_REGISTRY_KEY: AppKey[RoomRegistry] = AppKey("registry", RoomRegistry)
 
 logger = logging.getLogger(__name__)
 
@@ -30,7 +34,7 @@ logger = logging.getLogger(__name__)
 def create_app() -> web.Application:
     registry = RoomRegistry()
     app = web.Application()
-    app["registry"] = registry
+    app[_REGISTRY_KEY] = registry
 
     app.router.add_post("/signal/{room}/{role}/send", handle_send)
     app.router.add_get("/signal/{room}/{role}/recv", handle_recv)
@@ -44,11 +48,11 @@ def create_app() -> web.Application:
 
 
 async def on_startup(app: web.Application) -> None:
-    app["registry"].start()
+    app[_REGISTRY_KEY].start()
 
 
 async def on_shutdown(app: web.Application) -> None:
-    app["registry"].stop()
+    app[_REGISTRY_KEY].stop()
 
 
 async def handle_send(request: web.Request) -> web.Response:
@@ -63,7 +67,7 @@ async def handle_send(request: web.Request) -> web.Response:
     except Exception:
         return web.Response(status=400, text="Request body must be valid JSON")
 
-    registry: RoomRegistry = request.app["registry"]
+    registry: RoomRegistry = request.app[_REGISTRY_KEY]
     room = registry.get_or_create(room_name)
     room.connected.add(role)
     await room.put(sender_role=role, message=message)
@@ -90,7 +94,7 @@ async def handle_recv(request: web.Request) -> web.Response:
 
     subscriber_id = request.headers.get("X-Subscriber-Id") or str(uuid.uuid4())
 
-    registry: RoomRegistry = request.app["registry"]
+    registry: RoomRegistry = request.app[_REGISTRY_KEY]
     room = registry.get_or_create(room_name)
 
     # Register subscriber if not yet known
@@ -114,10 +118,10 @@ async def handle_recv(request: web.Request) -> web.Response:
 
 
 async def handle_list_rooms(request: web.Request) -> web.Response:
-    registry: RoomRegistry = request.app["registry"]
+    registry: RoomRegistry = request.app[_REGISTRY_KEY]
     return web.json_response({"rooms": registry.list_rooms()})
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    registry: RoomRegistry = request.app["registry"]
+    registry: RoomRegistry = request.app[_REGISTRY_KEY]
     return web.json_response({"status": "ok", "rooms": len(registry._rooms)})
