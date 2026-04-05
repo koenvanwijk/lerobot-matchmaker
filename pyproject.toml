@@ -1,0 +1,23 @@
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[project]
+name = "lerobot-matchmaker"
+version = "0.1.0"
+description = "WebRTC signaling and matchmaking server for lerobot-remote"
+readme = "README.md"
+license = { text = "MIT" }
+requires-python = ">=3.10"
+dependencies = [
+    "aiohttp>=3.9",
+]
+
+[project.scripts]
+lerobot-matchmaker = "lerobot_matchmaker.__main__:main"
+
+[project.urls]
+Repository = "https://github.com/koenvanwijk/lerobot-matchmaker"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/lerobot_matchmaker"]
