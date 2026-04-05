@@ -8,13 +8,17 @@ Routes:
   GET  /rooms                       — list active rooms (debug)
   GET  /health                      — health check
 
-The SignalingClient in lerobot-remote-transport uses these endpoints.
+Each receiver gets a unique subscriber_id (via X-Subscriber-Id header or
+auto-assigned on first poll) so multiple clients can receive independently.
+
+Background cleanup removes rooms idle for >ROOM_TTL_SECONDS (default 5 min).
 """
 
 from __future__ import annotations
 
 import json
 import logging
+import uuid
 
 from aiohttp import web
 
@@ -26,8 +30,6 @@ logger = logging.getLogger(__name__)
 def create_app() -> web.Application:
     registry = RoomRegistry()
     app = web.Application()
-
-    # Attach registry so handlers can access it
     app["registry"] = registry
 
     app.router.add_post("/signal/{room}/{role}/send", handle_send)
@@ -35,7 +37,18 @@ def create_app() -> web.Application:
     app.router.add_get("/rooms", handle_list_rooms)
     app.router.add_get("/health", handle_health)
 
+    app.on_startup.append(on_startup)
+    app.on_shutdown.append(on_shutdown)
+
     return app
+
+
+async def on_startup(app: web.Application) -> None:
+    app["registry"].start()
+
+
+async def on_shutdown(app: web.Application) -> None:
+    app["registry"].stop()
 
 
 async def handle_send(request: web.Request) -> web.Response:
@@ -62,7 +75,12 @@ async def handle_send(request: web.Request) -> web.Response:
 async def handle_recv(request: web.Request) -> web.Response:
     """
     Long-poll: wait for a message sent by {role} and return it.
-    Returns 204 if no message arrives within the timeout (client should retry).
+
+    The caller must include X-Subscriber-Id header with a stable UUID.
+    If omitted, a new UUID is assigned and returned in the response header
+    so the client can reuse it on subsequent polls.
+
+    Returns 204 if no message arrives within the timeout (client retries).
     """
     room_name = request.match_info["room"]
     sender_role = request.match_info["role"]
@@ -70,18 +88,28 @@ async def handle_recv(request: web.Request) -> web.Response:
     if sender_role not in VALID_ROLES:
         return web.Response(status=400, text=f"Invalid role: {sender_role!r}. Must be one of {VALID_ROLES}")
 
+    subscriber_id = request.headers.get("X-Subscriber-Id") or str(uuid.uuid4())
+
     registry: RoomRegistry = request.app["registry"]
     room = registry.get_or_create(room_name)
 
-    message = await room.get(sender_role=sender_role, timeout=25.0)
+    # Register subscriber if not yet known
+    if subscriber_id not in room.queues[sender_role]:
+        room.subscribe(sender_role, subscriber_id)
+        logger.debug("Room %s: new subscriber %s for %s", room_name, subscriber_id[:8], sender_role)
+
+    message = await room.get(sender_role=sender_role, subscriber_id=subscriber_id, timeout=25.0)
+
+    headers = {"X-Subscriber-Id": subscriber_id}
 
     if message is None:
-        return web.Response(status=204)  # timeout — client loops back
+        return web.Response(status=204, headers=headers)
 
     return web.Response(
         status=200,
         content_type="application/json",
         text=json.dumps(message),
+        headers=headers,
     )
 
 
@@ -91,4 +119,5 @@ async def handle_list_rooms(request: web.Request) -> web.Response:
 
 
 async def handle_health(request: web.Request) -> web.Response:
-    return web.json_response({"status": "ok"})
+    registry: RoomRegistry = request.app["registry"]
+    return web.json_response({"status": "ok", "rooms": len(registry._rooms)})
