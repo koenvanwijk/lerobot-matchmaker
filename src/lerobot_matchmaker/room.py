@@ -31,6 +31,11 @@ class Room:
     queues: dict[str, dict[str, asyncio.Queue]] = field(
         default_factory=lambda: {"operator": {}, "robot": {}}
     )
+    # Backlog: messages sent before any subscriber arrived, per role
+    # New subscribers get a copy of all backlog messages on first subscribe.
+    _backlog: dict[str, list] = field(
+        default_factory=lambda: {"operator": [], "robot": []}
+    )
     connected: set[str] = field(default_factory=set)
     last_active: float = field(default_factory=time.monotonic)
 
@@ -42,11 +47,17 @@ class Room:
         Register a new subscriber for messages from sender_role.
         If subscriber_id is provided, reuse it (idempotent).
         Returns the subscriber_id.
+        New subscribers receive any backlogged messages immediately.
         """
         if subscriber_id is None:
             subscriber_id = str(uuid.uuid4())
-        if subscriber_id not in self.queues[sender_role]:
-            self.queues[sender_role][subscriber_id] = asyncio.Queue()
+        subs = self.queues[sender_role]
+        if subscriber_id not in subs:
+            q: asyncio.Queue = asyncio.Queue()
+            # Pre-fill with any backlogged messages
+            for msg in self._backlog[sender_role]:
+                q.put_nowait(msg)
+            subs[subscriber_id] = q
         return subscriber_id
 
     def unsubscribe(self, sender_role: str, subscriber_id: str) -> None:
@@ -56,15 +67,17 @@ class Room:
         if sender_role not in VALID_ROLES:
             raise ValueError(f"Invalid role: {sender_role!r}")
         self._touch()
-        # Fan out to all subscribers
         subs = self.queues[sender_role]
         if not subs:
-            logger.debug("Room %s: no subscribers for %s yet, message queued to backlog", self.name, sender_role)
-            # Keep a single "backlog" subscriber so the message isn't lost
-            subs["__backlog__"] = subs.get("__backlog__") or asyncio.Queue()
-        for sid, q in subs.items():
-            await q.put(message)
-        logger.debug("Room %s: %s → %d subscribers", self.name, sender_role, len(subs))
+            # No subscribers yet — store in backlog for late arrivals
+            self._backlog[sender_role].append(message)
+            logger.debug("Room %s: no subscribers for %s, added to backlog (len=%d)",
+                         self.name, sender_role, len(self._backlog[sender_role]))
+        else:
+            # Fan out to all current subscribers
+            for q in subs.values():
+                await q.put(message)
+            logger.debug("Room %s: %s → %d subscribers", self.name, sender_role, len(subs))
 
     async def get(self, sender_role: str, subscriber_id: str, timeout: float = 25.0) -> dict | None:
         """
@@ -73,13 +86,7 @@ class Room:
         """
         if sender_role not in VALID_ROLES:
             raise ValueError(f"Invalid role: {sender_role!r}")
-        subs = self.queues[sender_role]
-        # Drain backlog into subscriber queue on first real get
-        if "__backlog__" in subs and subscriber_id in subs:
-            backlog: asyncio.Queue = subs["__backlog__"]
-            while not backlog.empty():
-                await subs[subscriber_id].put(backlog.get_nowait())
-        q = subs.get(subscriber_id)
+        q = self.queues[sender_role].get(subscriber_id)
         if q is None:
             return None
         self._touch()
