@@ -38,7 +38,7 @@ def _messages_ref(db: firestore.Client, room: str) -> firestore.CollectionRefere
     return db.collection("rooms").document(room).collection("messages")
 
 
-@https_fn.on_request()
+@https_fn.on_request(region="europe-west1")
 def matchmaker(req: https_fn.Request) -> https_fn.Response:
     path = req.path.rstrip("/")
     method = req.method
