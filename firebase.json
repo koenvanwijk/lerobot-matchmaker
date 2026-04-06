@@ -1,8 +1,9 @@
 {
   "functions": [
     {
-      "source": "firebase",
+      "source": "firebase_function",
       "codebase": "matchmaker",
+      "runtime": "python312",
       "ignore": [
         "node_modules",
         ".git",
