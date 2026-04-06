@@ -84,22 +84,13 @@ pip install git+https://github.com/koenvanwijk/lerobot-matchmaker
 
 ## Open issues
 
-- **#1 Room cleanup** — `RoomRegistry` grows indefinitely. Rooms are never deleted.
-  Fix: track last activity timestamp per room; sweep rooms idle for >N minutes via
-  an `aiohttp` background task.
+- ~~**#1 Room cleanup**~~ — **Fixed**: rooms expire after `ROOM_TTL_SECONDS` (300s) of inactivity via `_cleanup_loop()`.
 
-- **#2 No authentication** — any client can join any room by name. A shared secret
-  or token per room would prevent unwanted connections. Minimum viable: a
-  `?token=` query param validated against an env-var allowlist.
+- **#2 No authentication** *(open)* — any client can join any room by name. Minimum viable: a `?token=` query param validated against an env-var allowlist.
 
-- **#3 Single-consumer queues** — `asyncio.Queue` delivers each message to exactly one
-  consumer. If two operators poll the same room/role, messages are split between them.
-  Current assumption: exactly one operator and one robot per room. Add a guard that
-  rejects a second connection to the same role in a room.
+- ~~**#3 Single-consumer queues**~~ — **Fixed**: fan-out queues per subscriber_id; each subscriber gets their own copy. Multiple operators can poll the same room/role independently.
 
-- **#4 In-memory only** — all state is lost on server restart. Reconnecting peers must
-  redo the full handshake. Acceptable for now; a Redis backend would support
-  multi-process deployments.
+- **#4 In-memory only** *(open)* — all state is lost on server restart. Reconnecting peers must redo the full handshake. The Firebase Cloud Functions variant (`firebase_function/`) uses Firestore as persistent backend.
 
 ## Related repos
 
