@@ -1,0 +1,15 @@
+{
+  "functions": [
+    {
+      "source": "firebase",
+      "codebase": "matchmaker",
+      "ignore": [
+        "node_modules",
+        ".git",
+        "**/__pycache__/**",
+        "**/.pytest_cache/**",
+        "**/tests/**"
+      ]
+    }
+  ]
+}
